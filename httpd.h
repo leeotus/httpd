@@ -34,6 +34,7 @@
 #include <memory>
 #include <unordered_map>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -43,7 +44,7 @@
 
 #define LISTEN_CNT 20
 
-constexpr int BUF_SIZE = 1024;
+constexpr int BUF_SIZE = 4096;
 constexpr int EPOLL_SIZE = 2048;
 constexpr int PARAM_SIZE = 128;
 
@@ -124,7 +125,7 @@ void snd_404(int clnt_sock);
  * @return int 返回0表示成功,返回-1表示失败
  * @note 由上一次作业修改而来
  */
-int snd_files(int clnt_sock, FILE_TYPES ftypes, const char *file_path);
+int snd_files_total(int clnt_sock, FILE_TYPES ftypes, const char *file_path);
 
 /**
  * @brief 响应浏览器(客户端)的请求,发送对应的文件给客户端

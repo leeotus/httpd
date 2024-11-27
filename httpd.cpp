@@ -6,8 +6,9 @@
 #include <string.h>
 #include "httpd.h"
 #include <sys/sendfile.h>
+#include <sys/stat.h>
 
-#define DEBUG_MODE 0
+    #define DEBUG_MODE 0
 std::mutex debug_cout_mtx;
 
 ThreadPool::ThreadPool(unsigned int threads_num) {
@@ -63,6 +64,14 @@ void set_nonblocking_mode(int fd)
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
+size_t get_file_size(FILE *fp) {
+    size_t current_pos = ftell(fp);  // 先保存当前文件指针位置
+    fseek(fp, 0L, SEEK_END);  // 将文件指针移动到文件末尾
+    size_t size = ftell(fp);  // 获取文件大小（字节数）
+    fseek(fp, current_pos, SEEK_SET);  // 把文件指针移回原来保存的位置
+    return size;
+}
+
 void snd_403(int clnt_sock)
 {
     char res_header[BUF_SIZE];
@@ -87,11 +96,10 @@ void snd_404(int clnt_sock)
     send(clnt_sock, res_header, strlen(res_header), 0);
 }
 
-int snd_files(int clnt_sock, FILE_TYPES ftypes, const char *file_path)
+int snd_files_total(int clnt_sock, FILE_TYPES ftypes, const char *file_path)
 {
-    // ssize_t bytes_read;
     char res_header[BUF_SIZE];
-    // char buffer[BUF_SIZE];
+    FILE* writefp = fdopen(clnt_sock, "wb");
 
     FILE *fp = fopen(file_path, "rb");
     if(fp == nullptr)
@@ -104,9 +112,10 @@ int snd_files(int clnt_sock, FILE_TYPES ftypes, const char *file_path)
     }
 
     // 计算文件大小
-    fseek(fp, 0, SEEK_END);
-    size_t file_size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+    size_t file_size = get_file_size(fp);
+
+    // 设置标准I/O库为无缓冲模式，避免内部缓冲对发送数据的影响
+    setvbuf(fp, NULL, _IONBF, 0);
 
     // 制定HTTP回应头
     switch (ftypes) {
@@ -161,12 +170,28 @@ int snd_files(int clnt_sock, FILE_TYPES ftypes, const char *file_path)
     send(clnt_sock, res_header, strlen(res_header), 0);
 
     // 发送文件内容
-    off_t offset = 0;
-    ssize_t bytes_snd = sendfile(clnt_sock, fileno(fp), &offset, file_size);
-    if(bytes_snd == -1)
+    char buf[BUF_SIZE];
+    if(ftypes != PNG_FILE && ftypes != JPEG_FILE)
     {
-        return -1;
+        while(!feof(fp))
+        {
+            fgets(buf, BUF_SIZE, fp);
+            fputs(buf, writefp);
+            fflush(writefp);
+        }
+    } else {
+        ssize_t bytes_read, bytes_written;
+        while ((bytes_read = fread(buf, 1, BUF_SIZE, fp)) > 0) {
+            if ((bytes_written = fwrite(buf,1,bytes_read,writefp)) == -1) {
+                fclose(fp);
+                return -1;
+            } 
+            fflush(writefp);
+        }
     }
+
+    fclose(fp);
+    fclose(writefp);
 
 #if DEBUG_MODE
     std::unique_lock<std::mutex> _g(debug_cout_mtx);
@@ -262,31 +287,31 @@ void response_to_client(int fd, int epfd, const std::string doc_root)
     // TODO: 可以使用正则表达式来处理
     if(strstr(sub_str, ".html") != NULL)
     {
-        if(snd_files(fd,HTML_FILE, sub_str) == -1)
+        if(snd_files_total(fd,HTML_FILE, sub_str) == -1)
         {
             snd_404(fd);
         }
     }
     else if(strstr(sub_str, ".css") != NULL)
     {
-        if(snd_files(fd, CSS_FILE, sub_str) == -1)
+        if(snd_files_total(fd, CSS_FILE, sub_str) == -1)
         {
             snd_404(fd);
         }
     } else if(strstr(sub_str, ".js") != NULL)
     {
-        if(snd_files(fd, JS_FILE, sub_str) == -1)
+        if(snd_files_total(fd, JS_FILE, sub_str) == -1)
         {
             snd_404(fd);
         }
     } 
     else if(strstr(sub_str, ".png") != NULL){
-        if(snd_files(fd, PNG_FILE, sub_str) == -1){
+        if(snd_files_total(fd, PNG_FILE, sub_str) == -1){
             snd_404(fd);
         }
     } else if(strstr(sub_str, ".jpg") != NULL)
     {
-        if(snd_files(fd, JPEG_FILE, sub_str) == -1)
+        if(snd_files_total(fd, JPEG_FILE, sub_str) == -1)
         {
             snd_404(fd);
         }
